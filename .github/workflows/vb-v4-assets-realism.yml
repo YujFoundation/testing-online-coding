@@ -39,7 +39,7 @@ jobs:
             local out="$2"
             curl -A "$UA" -L --fail --retry 5 --retry-all-errors --retry-delay 2 "$url" -o "$out"
             test -s "$out"
-            file "$out"
+            file "$out" | grep -q 'JPEG image data'
           }
 
           fetch_img 'https://images.pexels.com/photos/13087350/pexels-photo-13087350.jpeg?cs=srgb&dl=pexels-sozutova-13087350.jpg&fm=jpg' 'vb_v4_assets/teacher_camera.jpg'
@@ -48,15 +48,6 @@ jobs:
           fetch_img 'https://images.unsplash.com/photo-1767611070476-09d0db4374a4?auto=format&fit=crop&fm=jpg&ixlib=rb-4.1.0&q=90&w=2400' 'vb_v4_assets/teacher_meditation_arms.jpg'
           fetch_img 'https://images.pexels.com/photos/8711309/pexels-photo-8711309.jpeg?cs=srgb&dl=pexels-rdne-8711309.jpg&fm=jpg' 'vb_v4_assets/hand_thumb_index_touch.jpg'
           fetch_img 'https://images.pexels.com/photos/8173426/pexels-photo-8173426.jpeg?cs=srgb&dl=pexels-kampus-8173426.jpg&fm=jpg' 'vb_v4_assets/teacher_home.jpg'
-
-          python - <<'PY'
-          from PIL import Image
-          from pathlib import Path
-          for p in Path('vb_v4_assets').glob('*.jpg'):
-              im = Image.open(p)
-              im.verify()
-              print(p.name, im.size)
-          PY
 
           cat > vb_v4_assets/ASSET_SOURCES.txt <<'TXT'
           teacher_camera.jpg — Pexels photo 13087350 by Sozuto
