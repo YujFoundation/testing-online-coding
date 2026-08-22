@@ -1,0 +1,74 @@
+name: VB V4 Realistic Visual Assets
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-assets:
+    if: startsWith(github.event.issue.title, '[automation] Fetch VB V4 realistic assets')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch realistic teacher and hand assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p vb_v4_assets .automation
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36'
+
+          fetch_img() {
+            local url="$1"
+            local out="$2"
+            curl -A "$UA" -L --fail --retry 5 --retry-all-errors --retry-delay 2 "$url" -o "$out"
+            test -s "$out"
+            file "$out"
+          }
+
+          fetch_img 'https://images.pexels.com/photos/13087350/pexels-photo-13087350.jpeg?cs=srgb&dl=pexels-sozutova-13087350.jpg&fm=jpg' 'vb_v4_assets/teacher_camera.jpg'
+          fetch_img 'https://images.unsplash.com/photo-1767611067414-b11b40fd0612?auto=format&fit=crop&fm=jpg&ixlib=rb-4.1.0&q=90&w=2400' 'vb_v4_assets/teacher_meditation_front.jpg'
+          fetch_img 'https://images.unsplash.com/photo-1767611098846-05ed978b17ce?auto=format&fit=crop&fm=jpg&ixlib=rb-4.1.0&q=90&w=2400' 'vb_v4_assets/teacher_meditation_side.jpg'
+          fetch_img 'https://images.unsplash.com/photo-1767611070476-09d0db4374a4?auto=format&fit=crop&fm=jpg&ixlib=rb-4.1.0&q=90&w=2400' 'vb_v4_assets/teacher_meditation_arms.jpg'
+          fetch_img 'https://images.pexels.com/photos/8711309/pexels-photo-8711309.jpeg?cs=srgb&dl=pexels-rdne-8711309.jpg&fm=jpg' 'vb_v4_assets/hand_thumb_index_touch.jpg'
+          fetch_img 'https://images.pexels.com/photos/8173426/pexels-photo-8173426.jpeg?cs=srgb&dl=pexels-kampus-8173426.jpg&fm=jpg' 'vb_v4_assets/teacher_home.jpg'
+
+          python - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          for p in Path('vb_v4_assets').glob('*.jpg'):
+              im = Image.open(p)
+              im.verify()
+              print(p.name, im.size)
+          PY
+
+          cat > vb_v4_assets/ASSET_SOURCES.txt <<'TXT'
+          teacher_camera.jpg — Pexels photo 13087350 by Sozuto (downloaded from images.pexels.com)
+          teacher_meditation_front.jpg — Unsplash photo YmmVnLm1WO8
+          teacher_meditation_side.jpg — Unsplash photo gnGpfxqm6XA
+          teacher_meditation_arms.jpg — Unsplash photo e_tFTQziNUw
+          hand_thumb_index_touch.jpg — Pexels photo 8711309 by RDNE Stock project
+          teacher_home.jpg — Pexels photo 8173426 by Kampus Production
+          TXT
+
+      - name: Upload assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-v4-realistic-visual-assets
+          path: vb_v4_assets
+          retention-days: 1
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '${{ github.run_id }}' > .automation/vb_v4_assets_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_v4_assets_run_id.txt
+          git commit -m 'automation: publish VB V4 asset run id' || true
+          git push
