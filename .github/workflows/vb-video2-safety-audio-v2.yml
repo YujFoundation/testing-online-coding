@@ -1,0 +1,185 @@
+name: VB Video 2 Safety Hindi Audio V2
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-audio:
+    if: startsWith(github.event.issue.title, '[automation] Build VB Video 2 Safety audio V2')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          echo '${{ github.run_id }}' > .automation/vb_video2_safety_v2_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_video2_safety_v2_run_id.txt
+          git commit -m 'automation: publish VB Video 2 safety V2 run id' || true
+          git push
+
+      - name: Install audio tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --quiet edge-tts pydub
+
+      - name: Generate Hindi narration and subtitles
+        shell: bash
+        run: |
+          cat > build_audio.py <<'PY'
+          from __future__ import annotations
+
+          import asyncio
+          import json
+          import subprocess
+          from pathlib import Path
+
+          import edge_tts
+          from pydub import AudioSegment
+          from pydub.silence import detect_nonsilent
+
+          OUT = Path('vb_video2_safety_audio')
+          CUE_DIR = OUT / 'voice_cues'
+          TMP = Path('tmp_audio')
+          OUT.mkdir(exist_ok=True)
+          CUE_DIR.mkdir(exist_ok=True)
+          TMP.mkdir(exist_ok=True)
+
+          TOTAL_MS = 450_000
+          TARGET_DBFS = -18.0
+          VOICE = 'hi-IN-SwaraNeural'
+
+          CUES = [
+              (2.0, 'विश्रांति बिन्दु बेसिक। वीडियो दो। सुरक्षा, गोपनीयता और अनिवार्य नियम।'),
+              (10.0, 'इस वीडियो को पूरा समझे बिना आगे के अभ्यास पर न जाएँ।'),
+              (17.0, 'आज कोई नया अभ्यास नहीं कराया जाएगा। आज हम केवल उन सीमाओं को स्पष्ट करेंगे, जो हर अभ्यास से पहले जानना आवश्यक है।'),
+              (31.0, 'यह सामग्री केवल दीक्षित साधकों, अधिकृत शिक्षकों और आंतरिक कार्यक्रम उपयोग के लिए है।'),
+              (43.0, 'मार्ग के बारे में सामान्य जानकारी साझा की जा सकती है। लेकिन इसकी सटीक तकनीक किसी अनधिकृत या अदीक्षित व्यक्ति को न सिखाएँ, और सार्वजनिक रूप से न दिखाएँ।'),
+              (60.0, 'पहला नियम है। अभ्यास हमेशा सुरक्षित परिस्थिति में करें।'),
+              (68.0, 'आँखें बंद करके अभ्यास केवल तब करें, जब आप सुरक्षित रूप से बैठे हों या लेटे हों।'),
+              (80.0, 'चलते समय या किसी मूवमेंट प्रैक्टिस में आँखें खुली रखें और आसपास की पूरी सामान्य जागरूकता बनाए रखें।'),
+              (95.0, 'अब चार स्पष्ट निषेध याद रखें।'),
+              (101.0, 'वाहन चलाते समय अभ्यास नहीं।'),
+              (108.0, 'सड़क पार करते समय अभ्यास नहीं।'),
+              (115.0, 'मशीन या उपकरण चलाते समय अभ्यास नहीं।'),
+              (122.0, 'और किसी भी ऐसे काम में अभ्यास नहीं, जिसमें आपका पूरा बाहरी ध्यान आवश्यक हो।'),
+              (134.0, 'सुरक्षा में कोई समझौता नहीं है। यदि परिस्थिति बदल जाए, तो अभ्यास छोड़कर पहले बाहरी स्थिति को संभालें।'),
+              (149.0, 'दूसरा नियम है। कुछ संकेत मिलें, तो तुरंत रुकना है।'),
+              (157.0, 'दर्द या चक्कर हो, तो रुकें।'),
+              (164.0, 'साँस फूलने लगे या घबराहट हो, तो रुकें।'),
+              (172.0, 'ब्लैकआउट, बेहोशी, संतुलन बिगड़ना, या गंभीर दिशाभ्रम हो, तो तुरंत अभ्यास बंद करें।'),
+              (186.0, 'यदि सामान्य काम करना कठिन हो रहा हो, नींद या मानसिक स्थिरता बुरी तरह प्रभावित हो रही हो, तो अभ्यास रोकें और शिक्षक से संपर्क करें।'),
+              (202.0, 'छाती में दर्द, गंभीर साँस की परेशानी, बेहोशी या किसी मेडिकल इमरजेंसी में उचित स्वास्थ्य सहायता भी लें।'),
+              (216.0, 'श्वास रोकने या पेट को कसने वाली कोई भी विधि केवल शिक्षक की प्रत्यक्ष निगरानी में की जा सकती है। इसे स्वयं कभी न आजमाएँ।'),
+              (232.0, 'तीसरा नियम है। केवल शिक्षक द्वारा दिया गया क्रम अपनाएँ।'),
+              (240.0, 'कोई चरण न छोड़ें। अपनी ओर से कोई नई तकनीक न जोड़ें। और किसी दूसरी अनिर्दिष्ट साधना के साथ इसे न मिलाएँ।'),
+              (256.0, 'अगले चरण में तभी जाएँ, जब निर्धारित जाँच पूरी हो और शिक्षक समीक्षा करके अनुमति दे।'),
+              (268.0, 'यदि आप अभ्यास को बदलना, तेज करना, जोड़ना या किसी चरण को छोड़ना चाहते हैं, तो पहले शिक्षक से बात करें।'),
+              (283.0, 'चौथा नियम है। अनुभव को पैदा नहीं करना है।'),
+              (291.0, 'दिए गए मूल बिन्दु को प्राथमिक रखें। दूसरी संवेदनाएँ हों, तो उन्हें केवल सहायक या सेकेंडरी ऑब्जर्वेशन की तरह रहने दें।'),
+              (305.0, 'किसी विशेष अनुभव को ढूँढें नहीं, बनाएँ नहीं, कल्पना से खड़ा न करें, और बलपूर्वक तीव्र न करें। वह आए या न आए। केवल जो वास्तव में उपस्थित है, उसे जानें।'),
+              (323.0, 'मन ऊब जाए, विश्लेषण करने लगे या संदेह करे, तो केवल इसी कारण अभ्यास न छोड़ें। निर्धारित अभ्यास जारी रखें और आवश्यकता होने पर शिक्षक से चर्चा करें।'),
+              (339.0, 'पाँचवाँ नियम है। इस अनुभव का उपयोग किसी दूसरे व्यक्ति पर नहीं करना है।'),
+              (348.0, 'किसी को प्रभावित करने, नियंत्रित करने, आकर्षित करने, ठीक करने, या उसके भीतर कोई इच्छा अथवा इंटेंशन डालने का प्रयास न करें।'),
+              (364.0, 'किसी दूसरे व्यक्ति को छूकर शिक्षक जैसी दीक्षा देने या इस मैनुअल के आधार पर प्रयोग करने का प्रयास भी न करें।'),
+              (378.0, 'छठा नियम है। अभ्यास को ईमानदारी से दर्ज करें।'),
+              (386.0, 'स्टेप एक में कोई कठोर दैनिक समय कोटा नहीं है। अभ्यास छूट जाए, तो अपराधबोध के बिना अगली उपलब्ध अवधि से फिर शुरू करें।'),
+              (402.0, 'हर दिन डायरी में कम से कम एक पंक्ति लिखें। आज कुछ ध्यान देने योग्य नहीं हुआ। यह भी एक वैध एंट्री है।'),
+              (417.0, 'शिक्षक से संपर्क करें यदि अनुभव लंबे समय तक नहीं मिल रहा, पहले स्थिर था और अब गायब है, स्पर्श और नाड़ी में अंतर स्पष्ट नहीं हो रहा, या डरावने सपने, असामान्य धारणाएँ, घबराहट अथवा स्वयं से अलगाव जैसे अनुभव हो रहे हैं।'),
+              (438.0, 'अंतिम स्मरण। सुरक्षित स्थान। दिया हुआ क्रम। कोई बल नहीं। कोई सार्वजनिक साझाकरण नहीं। असामान्य लक्षण पर तुरंत रुकें। और आगे केवल शिक्षक की समीक्षा के बाद बढ़ें।'),
+          ]
+
+          async def synth(text: str, output: Path) -> None:
+              c = edge_tts.Communicate(text, VOICE, rate='-8%', volume='+0%', pitch='-2Hz')
+              await c.save(str(output))
+
+          def trim(seg: AudioSegment) -> AudioSegment:
+              if seg.dBFS == float('-inf'):
+                  return seg
+              ranges = detect_nonsilent(seg, min_silence_len=70, silence_thresh=max(-46, seg.dBFS - 27), seek_step=5)
+              if not ranges:
+                  return seg
+              return seg[max(0, ranges[0][0]-80):min(len(seg), ranges[-1][1]+120)]
+
+          def fit(seg: AudioSegment, max_ms: int, idx: int) -> AudioSegment:
+              if len(seg) <= max_ms:
+                  return seg
+              factor = len(seg) / max_ms
+              src = TMP / f'fit_{idx:02d}_src.wav'
+              dst = TMP / f'fit_{idx:02d}_dst.wav'
+              seg.export(src, format='wav')
+              filters=[]
+              while factor > 2.0:
+                  filters.append('atempo=2.0')
+                  factor /= 2.0
+              while factor < 0.5:
+                  filters.append('atempo=0.5')
+                  factor /= 0.5
+              filters.append(f'atempo={factor:.6f}')
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(src),'-filter:a',','.join(filters),'-ar','48000','-ac','1',str(dst)],check=True)
+              return AudioSegment.from_wav(dst)
+
+          def srt_time(sec: float) -> str:
+              ms=int(round(sec*1000)); h,ms=divmod(ms,3600000); m,ms=divmod(ms,60000); s,ms=divmod(ms,1000)
+              return f'{h:02d}:{m:02d}:{s:02d},{ms:03d}'
+
+          async def main() -> None:
+              master=AudioSegment.silent(duration=TOTAL_MS, frame_rate=48000).set_channels(1)
+              records=[]
+              for i,(start,text) in enumerate(CUES):
+                  mp3=TMP/f'cue_{i:02d}.mp3'
+                  await synth(text,mp3)
+                  seg=trim(AudioSegment.from_file(mp3)).set_frame_rate(48000).set_channels(1)
+                  if seg.dBFS != float('-inf'):
+                      seg=seg.apply_gain(TARGET_DBFS-seg.dBFS)
+                  next_start=CUES[i+1][0] if i+1<len(CUES) else TOTAL_MS/1000
+                  max_ms=max(800,int((next_start-start-.28)*1000))
+                  seg=fit(seg,max_ms,i).fade_in(35).fade_out(70)
+                  cue_path=CUE_DIR/f'cue_{i:02d}.wav'
+                  seg.export(cue_path,format='wav')
+                  master=master.overlay(seg,position=int(start*1000))
+                  end=min(start+len(seg)/1000,next_start-.12)
+                  records.append({'index':i+1,'start':start,'end':end,'duration':end-start,'text':text,'file':cue_path.name})
+
+              wav=OUT/'Vishranti_Bindu_Basic_Video2_Hindi_Narration.wav'
+              m4a=OUT/'Vishranti_Bindu_Basic_Video2_Hindi_Narration.m4a'
+              master.export(wav,format='wav')
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(wav),'-c:a','aac','-b:a','256k','-ar','48000','-ac','1',str(m4a)],check=True)
+              (OUT/'cues.json').write_text(json.dumps(records,ensure_ascii=False,indent=2),encoding='utf-8')
+              (OUT/'Video2_Hindi_Narration_Script.txt').write_text('\n\n'.join(r['text'] for r in records),encoding='utf-8')
+
+              srt=[]
+              for i,r in enumerate(records,1):
+                  srt.extend([str(i),f"{srt_time(r['start'])} --> {srt_time(r['end'])}",r['text'],''])
+              (OUT/'Vishranti_Bindu_Basic_Video2_Hindi_Subtitles.srt').write_text('\n'.join(srt),encoding='utf-8')
+
+              ass=['[Script Info]','ScriptType: v4.00+','PlayResX: 1920','PlayResY: 1080','WrapStyle: 0','','[V4+ Styles]','Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding','Style: Default,Noto Sans Devanagari UI,42,&H00FFFFFF,&H00FFFFFF,&H0007161D,&HDC07161D,1,0,0,0,100,100,0,0,3,2,0,2,180,180,55,1','','[Events]','Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text']
+              for r in records:
+                  def at(sec):
+                      h=int(sec//3600); m=int((sec%3600)//60); s=sec%60
+                      return f'{h}:{m:02d}:{s:05.2f}'
+                  ass.append(f"Dialogue: 0,{at(r['start'])},{at(r['end'])},Default,,0,0,0,,{r['text']}")
+              (OUT/'Vishranti_Bindu_Basic_Video2_Hindi_Subtitles.ass').write_text('\n'.join(ass),encoding='utf-8')
+
+          asyncio.run(main())
+          PY
+          python build_audio.py
+
+      - name: Upload audio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-video2-safety-audio-v2
+          path: vb_video2_safety_audio
+          retention-days: 1
