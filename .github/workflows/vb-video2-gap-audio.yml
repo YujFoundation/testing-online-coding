@@ -1,0 +1,49 @@
+name: VB Video2 Gap Audio
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-audio:
+    if: startsWith(github.event.issue.title, '[automation] Build VB Video2 gap audio')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          echo '${{ github.run_id }}' > .automation/vb_video2_gap_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_video2_gap_run_id.txt
+          git commit -m 'automation: publish VB Video2 gap run id' || true
+          git push
+
+      - name: Install audio tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --quiet edge-tts pydub
+
+      - name: Build Hindi audio
+        env:
+          TOTAL_MS: '805000'
+          VOICE: 'hi-IN-SwaraNeural'
+        run: python scripts/build_vb_timed_hindi_audio.py
+
+      - name: Upload audio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-video2-gap-audio
+          path: vb_video2_audio
+          retention-days: 1
