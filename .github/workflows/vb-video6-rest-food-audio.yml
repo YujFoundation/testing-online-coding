@@ -1,0 +1,205 @@
+name: VB Video6 Rest Food Hindi Audio
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-audio:
+    if: startsWith(github.event.issue.title, '[automation] Build VB Video6 rest food audio')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          echo '${{ github.run_id }}' > .automation/vb_video6_rest_food_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_video6_rest_food_run_id.txt
+          git commit -m 'automation: publish VB Video6 run id' || true
+          git push
+
+      - name: Install audio tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --quiet edge-tts pydub
+
+      - name: Generate Hindi narration and subtitles
+        shell: bash
+        run: |
+          cat > build_audio.py <<'PY'
+          from __future__ import annotations
+
+          import asyncio
+          import json
+          import subprocess
+          from pathlib import Path
+
+          import edge_tts
+          from pydub import AudioSegment
+          from pydub.silence import detect_nonsilent
+
+          ROOT = Path('vb_video6_rest_food_audio')
+          CUE_DIR = ROOT / 'voice_cues'
+          TMP = Path('tmp_vb_video6_rest_food')
+          ROOT.mkdir(exist_ok=True)
+          CUE_DIR.mkdir(exist_ok=True)
+          TMP.mkdir(exist_ok=True)
+
+          TOTAL_MS = 660_000
+          TARGET_DBFS = -18.0
+          VOICE = 'hi-IN-SwaraNeural'
+
+          CUES = [
+              (2.0, 'विश्रांति बिन्दु। पाठ छह। आराम, स्नान और भोजन के प्रभाव का अनुभव-आधारित निरीक्षण।'),
+              (11.0, 'यह सामग्री केवल दीक्षित साधकों, अधिकृत शिक्षकों और आंतरिक कार्यक्रम उपयोग के लिए है।'),
+              (21.0, 'आज हम कोई नया आध्यात्मिक अभ्यास नहीं जोड़ेंगे। हम सीखेंगे कि अपनी दिनचर्या की स्थितियों की तुलना कैसे करनी है।'),
+              (35.0, 'उद्देश्य पहले से नियम बना लेना नहीं है। उद्देश्य है—अपने अभिलेख में बार-बार दिखाई देने वाले व्यक्तिगत ढंग को पहचानना।'),
+
+              (52.0, 'तुलना शुरू करने से पहले आज की स्थिति का छोटा आधार-अभिलेख बनाएँ।'),
+              (61.0, 'लिखें—पिछली नींद कितनी और कैसी थी, आखिरी भोजन कब और कितना हुआ, स्नान हुआ या नहीं, और आज अभ्यास किस समय कर रहे हैं।'),
+              (82.0, 'फिर पहले सीखे हुए क्रम से अंगूठे और तर्जनी के मूल स्पर्श-बिन्दु को जानें।'),
+              (94.0, 'ध्यान दें कि अनुभव स्पष्ट होने में कितना समय लगा और उस समय स्पर्श, गर्माहट या दूसरी वास्तविक जानकारी कितनी स्पष्ट थी।'),
+
+              (113.0, 'अब आराम और नींद के प्रभाव को समझें।'),
+              (120.0, 'यदि शरीर सच में थका हुआ या रिक्त लगे, तो वास्तविक आराम और पर्याप्त नींद की आवश्यकता को देखें।'),
+              (135.0, 'किसी निश्चित संख्या को सबके लिए नियम न बनाएँ। अपनी परिस्थिति और बार-बार दिखने वाले प्रभाव के आधार पर निरीक्षण करें।'),
+              (153.0, 'नींद की अवधि के साथ जागने की ताजगी और अभ्यास आरम्भ होने का समय भी लिखें।'),
+
+              (168.0, 'अब स्नान से पहले और बाद की स्थिति की तुलना करें।'),
+              (176.0, 'कभी शरीर स्नान के बाद अधिक ताज़ा या संवेदनशील लग सकता है। यह आपके लिए सच है या नहीं, इसे पहले से तय न करें।'),
+              (193.0, 'समान प्रकार के छोटे अभ्यास को स्नान से पहले और किसी दूसरे अवसर पर स्नान के बाद करें।'),
+              (208.0, 'दोनों बार अनुभव आरम्भ होने का समय और स्पष्टता लिखें।'),
+
+              (220.0, 'अब भोजन की मात्रा पर ध्यान दें।'),
+              (227.0, 'हल्के भोजन, सामान्य भोजन और अधिक भोजन के बाद शरीर की सुस्ती तथा स्पर्श-बिन्दु की स्पष्टता अलग हो सकती है।'),
+              (244.0, 'जानबूझकर अधिक भोजन करके प्रयोग न करें। जीवन में स्वाभाविक रूप से आने वाली स्थितियों को ईमानदारी से दर्ज करें।'),
+              (260.0, 'भोजन की मात्रा, उसके बाद की सुस्ती, और अनुभव स्पष्ट होने में लगा समय लिखें।'),
+
+              (276.0, 'सुबह की एक स्रोत-सुझावित क्रम-विधि भी निरीक्षण के लिए दी गई है।'),
+              (286.0, 'गुनगुना पानी, फिर भिगोए या कुचले मेवे अथवा फल, और उसके बाद पका भोजन।'),
+              (301.0, 'यदि अपने अभिलेख में यह क्रम उपयोगी लगे, तो पकाए भोजन को थोड़ा बाद में रखने की तुलना की जा सकती है।'),
+              (318.0, 'इसे अंधा नियम न बनाएँ। अपने शरीर की वास्तविक प्रतिक्रिया और शिक्षक के मार्गदर्शन को प्राथमिक रखें।'),
+
+              (334.0, 'भारी, अधिक तला हुआ या बाजार से लिया हुआ भोजन कुछ लोगों में अनुभव को देर से स्पष्ट कर सकता है।'),
+              (349.0, 'यदि ऐसा हो, तो केवल यह लिखें कि अनुभव कितनी देर से आया और उसकी गुणवत्ता कैसी रही।'),
+              (365.0, 'एक बार की घटना से निष्कर्ष न निकालें। वही ढंग अलग-अलग अवसरों पर दोहरता है या नहीं, यह देखें।'),
+
+              (382.0, 'दूध, दूसरे दुग्ध पदार्थ, चावल और लस्सी के बाद होने वाली सुस्ती का भी व्यक्तिगत निरीक्षण किया जा सकता है।'),
+              (399.0, 'यदि बार-बार एक ही संबंध दिखाई दे, तभी उसे अपने अभिलेख का उपयोगी संकेत मानें।'),
+              (414.0, 'किसी एक दिन की सुस्ती या स्पष्टता को सार्वभौमिक नियम न बनाएँ।'),
+
+              (427.0, 'अब आप मेरे साथ एक सरल तुलना-योजना बनाएँ।'),
+              (435.0, 'अपनी नोटबुक में दो खण्ड बनाएँ—स्थिति क और स्थिति ख।'),
+              (447.0, 'स्थिति क के लिए कोई स्वाभाविक हल्की और अपेक्षाकृत ताज़ी अवस्था चुनें।'),
+              (460.0, 'स्थिति ख के लिए जीवन में स्वाभाविक रूप से आने वाली दूसरी अवस्था चुनें—जैसे कम आराम, अधिक भारीपन या स्नान से पहले की स्थिति।'),
+              (478.0, 'किसी अस्वास्थ्यकर स्थिति को जानबूझकर पैदा नहीं करना है। केवल जो जीवन में स्वाभाविक रूप से हो, उसे दर्ज करना है।'),
+              (494.0, 'दोनों खण्डों में लिखें—नींद, स्नान, भोजन की मात्रा, अभ्यास का समय, अनुभव आरम्भ होने में लगा समय और अनुभव की स्पष्टता।'),
+              (516.0, 'अब अपनी तुलना-सारणी पूरी करें। अगले पैंतालीस सेकंड केवल लिखने के लिए हैं।'),
+              (539.0, 'ध्यान रहे—दोनों अवसरों पर अभ्यास का मूल क्रम वही रखना है।'),
+
+              (563.0, 'अब अगली दो सुरक्षित अभ्यास-अवधियाँ चुनें, जिनमें आप यह तुलना करेंगे।'),
+              (572.0, 'तारीख और सम्भावित समय लिखें।'),
+              (583.0, 'एक अवसर को हल्की स्थिति के लिए और दूसरे को स्वाभाविक दूसरी स्थिति के लिए रखें।'),
+              (597.0, 'अगले तीस सेकंड अपनी योजना पूरी करें।'),
+
+              (628.0, 'अन्तिम जाँच करें। क्या आपने स्थिति को जानबूझकर नहीं बनाया? क्या दोनों बार वही मूल अभ्यास रहेगा? क्या परिणाम के बजाय निरीक्षण दर्ज होगा?'),
+              (646.0, 'अभ्यास के बाद लिखें—पहले और बाद में क्या अन्तर था, अनुभव कितनी देर में स्पष्ट हुआ, और क्या वही संबंध फिर दिखाई दिया।'),
+              (660.0-12.0, 'आज की सीख है—आराम, स्नान और भोजन को कठोर नियम नहीं, अपने अनुभव के ईमानदार निरीक्षण की तरह देखें।'),
+          ]
+
+          async def synth(text: str, out_mp3: Path) -> None:
+              comm = edge_tts.Communicate(text, VOICE, rate='-4%', pitch='+0Hz', volume='+0%')
+              await comm.save(str(out_mp3))
+
+          def trim(seg: AudioSegment) -> AudioSegment:
+              if seg.dBFS == float('-inf'):
+                  return seg
+              ranges = detect_nonsilent(seg, min_silence_len=70, silence_thresh=max(-47, seg.dBFS - 28), seek_step=5)
+              if not ranges:
+                  return seg
+              a = max(0, ranges[0][0] - 80)
+              b = min(len(seg), ranges[-1][1] + 130)
+              return seg[a:b]
+
+          def atempo_chain(factor: float) -> str:
+              parts = []
+              while factor > 2.0:
+                  parts.append(2.0); factor /= 2.0
+              while factor < 0.5:
+                  parts.append(0.5); factor /= 0.5
+              parts.append(factor)
+              return ','.join(f'atempo={x:.6f}' for x in parts)
+
+          def fit(seg: AudioSegment, max_ms: int, idx: int) -> AudioSegment:
+              if len(seg) <= max_ms:
+                  return seg
+              factor = len(seg) / max_ms
+              src = TMP / f'fit_{idx:02d}_src.wav'
+              dst = TMP / f'fit_{idx:02d}_dst.wav'
+              seg.export(src, format='wav')
+              subprocess.run([
+                  'ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(src),
+                  '-filter:a',atempo_chain(factor),'-ar','48000','-ac','1',str(dst)
+              ], check=True)
+              return AudioSegment.from_wav(dst)
+
+          def srt_time(sec: float) -> str:
+              ms = int(round(sec * 1000))
+              h, ms = divmod(ms, 3_600_000); m, ms = divmod(ms, 60_000); s, ms = divmod(ms, 1000)
+              return f'{h:02d}:{m:02d}:{s:02d},{ms:03d}'
+
+          async def main() -> None:
+              master = AudioSegment.silent(duration=TOTAL_MS, frame_rate=48000).set_channels(1)
+              meta, srt, script_lines = [], [], []
+              for i, (start, text) in enumerate(CUES, 1):
+                  mp3 = TMP / f'{i:02d}.mp3'
+                  await synth(text, mp3)
+                  seg = trim(AudioSegment.from_file(mp3)).set_frame_rate(48000).set_channels(1)
+                  if seg.dBFS != float('-inf'):
+                      seg = seg.apply_gain(TARGET_DBFS - seg.dBFS)
+                  next_start = CUES[i][0] if i < len(CUES) else TOTAL_MS / 1000
+                  max_ms = max(900, int((next_start - start) * 1000) - 260)
+                  seg = fit(seg, max_ms, i)
+                  wav = CUE_DIR / f'{i:02d}.wav'
+                  seg.export(wav, format='wav')
+                  master = master.overlay(seg, position=int(start * 1000))
+                  end = min(TOTAL_MS / 1000, start + len(seg) / 1000)
+                  meta.append({'start': start, 'end': end, 'text': text, 'audio': wav.name})
+                  srt.extend([str(i), f'{srt_time(start)} --> {srt_time(end)}', text, ''])
+                  script_lines.append(text)
+
+              wav_master = ROOT / 'Vishranti_Bindu_Video6_Hindi_Narration.wav'
+              m4a_master = ROOT / 'Vishranti_Bindu_Video6_Hindi_Narration.m4a'
+              master.export(wav_master, format='wav')
+              subprocess.run([
+                  'ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(wav_master),
+                  '-af','highpass=f=70,lowpass=f=12000,alimiter=limit=0.94',
+                  '-t',str(TOTAL_MS/1000),'-c:a','aac','-b:a','224k','-ar','48000','-ac','2',str(m4a_master)
+              ], check=True)
+              (ROOT / 'cues.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+              (ROOT / 'Vishranti_Bindu_Video6_Hindi_Subtitles.srt').write_text('\n'.join(srt), encoding='utf-8')
+              (ROOT / 'Vishranti_Bindu_Video6_Hindi_Voiceover_Script.txt').write_text('\n\n'.join(script_lines), encoding='utf-8')
+              (ROOT / 'README.txt').write_text('VB Video 6 Hindi narration and subtitles. Duration: 11:00. Voice: hi-IN-SwaraNeural.', encoding='utf-8')
+
+          asyncio.run(main())
+          PY
+          python build_audio.py
+
+      - name: Upload audio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-video6-rest-food-audio
+          path: vb_video6_rest_food_audio
+          retention-days: 1
