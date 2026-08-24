@@ -1,0 +1,261 @@
+name: VB Video1 Revised R4 Assets and Audio
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: startsWith(github.event.issue.title, '[automation] Build VB Video1 revised R4')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          echo '${{ github.run_id }}' > .automation/vb_video1_revised_r4_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_video1_revised_r4_run_id.txt
+          git commit -m 'automation: publish VB Video1 revised R4 run id' || true
+          git push
+
+      - name: Install tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg curl file
+          python -m pip install --quiet edge-tts pydub pillow
+
+      - name: Fetch Indian posture reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p vb_video1_revised_r4/assets
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36'
+          OUT='vb_video1_revised_r4/assets/indian_sukhasana.jpg'
+          if ! curl -A "$UA" -L --fail --retry 5 --retry-all-errors --retry-delay 2 \
+              'https://unsplash.com/photos/IFC3fD0ZaoA/download?force=true&w=2400' -o "$OUT"; then
+            curl -A "$UA" -L --fail --retry 5 --retry-all-errors --retry-delay 2 \
+              'https://static.toiimg.com/photo/108940357/108940357.jpg' -o "$OUT"
+          fi
+          test -s "$OUT"
+          file "$OUT"
+          python - <<'PY'
+          from PIL import Image
+          p='vb_video1_revised_r4/assets/indian_sukhasana.jpg'
+          im=Image.open(p).convert('RGB')
+          if im.width < 900 or im.height < 700:
+              im=im.resize((max(1200,im.width*2),max(900,im.height*2)),Image.Resampling.LANCZOS)
+              im.save(p,quality=96)
+          print('asset',im.size)
+          PY
+          cat > vb_video1_revised_r4/assets/ASSET_SOURCE.txt <<'TXT'
+          Primary posture reference: Unsplash free photo IFC3fD0ZaoA by Aparna Johri, downloaded through the Unsplash photo download endpoint. A fallback reference is used only if that endpoint fails.
+          TXT
+
+      - name: Generate natural Hindi narration and subtitles
+        shell: bash
+        run: |
+          cat > build_audio.py <<'PY'
+          from __future__ import annotations
+
+          import asyncio
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+
+          import edge_tts
+          from pydub import AudioSegment
+          from pydub.silence import detect_nonsilent
+
+          ROOT = Path('vb_video1_revised_r4')
+          OUT = ROOT / 'audio'
+          CUE_DIR = OUT / 'voice_cues'
+          TMP = Path('tmp_vb_video1_revised_r4')
+          OUT.mkdir(parents=True, exist_ok=True)
+          CUE_DIR.mkdir(exist_ok=True)
+          TMP.mkdir(exist_ok=True)
+
+          TOTAL_MS = 630_000
+          TARGET_DBFS = -18.0
+          VOICE = 'hi-IN-SwaraNeural'
+
+          CUES = [
+              (2.0, 'विश्रांति बिन्दु। पहला पाठ। अर्थ और पहला निर्देशित स्पर्श-अनुभव।'),
+              (9.0, 'यह सामग्री केवल दीक्षित साधकों, अधिकृत शिक्षकों और आंतरिक कार्यक्रम उपयोग के लिए है।'),
+              (18.0, 'आज हम विश्रांति का सरल अर्थ समझेंगे, शरीर और हाथों की तैयारी करेंगे, और अंगूठे तथा तर्जनी के हल्के स्पर्श को पहली बार जानेंगे।'),
+
+              (30.0, 'विश्रांति का सरल अर्थ है परम विश्राम।'),
+              (38.0, 'आज इस शब्द को किसी बड़े सिद्धान्त की तरह नहीं, केवल एक दिशा की तरह समझें। शरीर और मन में अनावश्यक प्रयास कम करना ही हमारी पहली तैयारी है।'),
+              (51.0, 'आज का पहला अभ्यास-साधन अंगूठे और तर्जनी की नोकों का अत्यन्त हल्का स्पर्श है।'),
+              (61.0, 'यह अभी अंतिम विश्रांति बिन्दु की घोषणा नहीं है। यह उस दिशा में प्रवेश करने का पहला सरल अभ्यास-बिन्दु है।'),
+
+              (72.0, 'अभ्यास किसी सुरक्षित और शांत स्थान पर, स्थिर बैठकर करें।'),
+              (80.0, 'वाहन चलाते समय, सड़क पार करते समय, मशीन चलाते समय, या किसी ऐसे काम में इसे न करें जिसमें पूरा बाहरी ध्यान आवश्यक हो।'),
+
+              (94.0, 'अब अपने लिए एक सहज और स्थिर बैठने की स्थिति चुनें।'),
+              (103.0, 'आप भूमि पर पैर मोड़कर बैठ सकते हैं, या स्थिर कुर्सी पर बैठ सकते हैं। ऐसी स्थिति चुनें जिसमें कुछ मिनट बिना दर्द और बिना बार-बार हिले बैठ सकें।'),
+              (119.0, 'रीढ़ को स्वाभाविक रूप से सीधा रहने दें। उसे खींचें नहीं। सिर संतुलित रहे और ठोड़ी सहज रहे।'),
+              (131.0, 'अब अपनी स्थिति ठीक कर लें।'),
+
+              (143.0, 'कंधों को ढीला छोड़ें।'),
+              (151.0, 'जबड़े को सहज करें। दाँतों को कसकर न रखें।'),
+              (160.0, 'पेट को भीतर खींचने या कठोर रखने की आवश्यकता नहीं है।'),
+              (170.0, 'हाथों और उँगलियों की अनावश्यक पकड़ छोड़ दें।'),
+              (180.0, 'यदि आपकी स्थिति पूरी तरह सुरक्षित है, तो पलकों को धीरे से बंद करें। उन्हें कसें नहीं।'),
+              (191.0, 'कुछ क्षण केवल शरीर की स्थिरता और सहजता को जानें।'),
+
+              (203.0, 'अब हाथों की स्थिति समझें।'),
+              (209.0, 'हाथों को जाँघों या गोद पर आराम से रखें। हथेलियाँ ऊपर की ओर रहें।'),
+              (220.0, 'दीक्षा के समय जिस हाथ या दोनों हाथों का निर्देश मिला है, उसी निर्देश का पालन करें।'),
+              (232.0, 'यदि आपको दिया हुआ हाथ याद नहीं है, तो आगे न बढ़ें। पहले अपने शिक्षक से पूछें।'),
+
+              (244.0, 'अब सही स्पर्श को देखकर समझें।'),
+              (250.0, 'अंगूठे की नोक और तर्जनी की नोक को केवल इतना मिलाना है कि त्वचा का संपर्क हो जाए।'),
+              (261.0, 'दबाव बिल्कुल नहीं देना है। उँगली चपटी न हो, नाखून न दबें और बाकी हाथ ढीला रहे।'),
+              (274.0, 'सही स्थिति में दोनों नोकें बस मिलती हैं। यही आज का सटीक स्पर्श-बिन्दु है।'),
+
+              (287.0, 'सबसे पहले वास्तविक शारीरिक जानकारी को जानें।'),
+              (295.0, 'पहला, स्पर्श। क्या दोनों नोकें सच में मिल रही हैं?'),
+              (305.0, 'दूसरा, हल्का दबाव। क्या संपर्क है, पर जोर नहीं?'),
+              (315.0, 'तीसरा, गर्माहट। क्या वहाँ तापमान का कोई छोटा अंतर है?'),
+              (326.0, 'चौथा, त्वचा की बनावट। क्या वह चिकनी, खुरदरी, नम या सूखी लग रही है?'),
+              (339.0, 'इनमें से जो स्पष्ट है, केवल उसी को जानें। अभी किसी असाधारण अनुभव की तलाश नहीं करनी है।'),
+
+              (353.0, 'अब आप मेरे साथ इसे करें।'),
+              (358.0, 'अपनी बैठने की स्थिति सहज करें।'),
+              (365.0, 'कंधे, जबड़ा, पेट और हाथ ढीले छोड़ें।'),
+              (374.0, 'हथेली ऊपर रखें और दिए हुए हाथ को आराम से टिकाएँ।'),
+              (384.0, 'अंगूठे और तर्जनी की नोकों को अत्यन्त हल्के से मिलाएँ।'),
+              (396.0, 'यदि सुरक्षित हों, तो आँखें धीरे से बंद करें।'),
+              (405.0, 'ध्यान ठीक उसी छोटे बिन्दु पर रखें जहाँ त्वचा की दोनों सतहें मिल रही हैं।'),
+              (418.0, 'पहले केवल स्पर्श को जानें।'),
+              (427.0, 'अब देखें, कहीं अनावश्यक दबाव तो नहीं है।'),
+              (437.0, 'गर्माहट और त्वचा की बनावट को सहजता से जानें।'),
+              (448.0, 'कुछ भी बनाना नहीं है। जो वास्तव में उपस्थित है, केवल उसी के साथ रहें।'),
+
+              (462.0, 'अब अगले चालीस क्षण आप स्वयं अभ्यास करें। हल्का स्पर्श बनाए रखें और जो स्पष्ट है, केवल उसे जानें।'),
+              (483.0, 'ध्यान भटके, तो बिना झुँझलाहट उसी छोटे स्पर्श-बिन्दु पर लौट आएँ।'),
+
+              (505.0, 'अब छोटी सी जाँच करें।'),
+              (511.0, 'क्या हाथ ढीला है?'),
+              (518.0, 'क्या दबाव बहुत हल्का है?'),
+              (525.0, 'क्या स्पर्श-बिन्दु स्पष्ट है?'),
+              (533.0, 'यदि इनमें से किसी का उत्तर नहीं है, तो हाथ ढीला करें और दबाव कम करके फिर से सरल स्पर्श जानें।'),
+
+              (548.0, 'किसी विशेष परिणाम की बेचैन प्रतीक्षा न करें।'),
+              (556.0, 'अनुभव को कल्पना से बनाने, बढ़ाने या बलपूर्वक पैदा करने की कोशिश न करें।'),
+              (568.0, 'यदि केवल साधारण स्पर्श स्पष्ट है, तो वही आज के अभ्यास के लिए पर्याप्त और सही आधार है।'),
+
+              (581.0, 'अब वे नियम याद रखें जिनका अर्थ आप इस अभ्यास के बाद समझ सकते हैं।'),
+              (590.0, 'दिए हुए क्रम का पालन करें। अपनी ओर से विधि न बदलें और अलग अभ्यासों को न मिलाएँ।'),
+              (602.0, 'इस सटीक अभ्यास-विधि को किसी अनधिकृत व्यक्ति को न सिखाएँ और सार्वजनिक रूप से साझा न करें।'),
+              (614.0, 'दर्द, चक्कर, साँस फूलना, घबराहट, बेहोशी या गहरा दिशाभ्रम हो, तो अभ्यास तुरंत रोकें और शिक्षक से संपर्क करें।'),
+
+              (626.0, 'अब उँगलियों को ढीला छोड़ें, आँखें धीरे से खोलें और आसपास के स्थान को फिर से महसूस करें। आज जो सबसे स्पष्ट था, उसे एक पंक्ति में लिखें।'),
+          ]
+
+          # Hard language preflight: learner-facing narration must not contain Latin letters.
+          for _, text in CUES:
+              if re.search(r'[A-Za-z]', text):
+                  raise SystemExit(f'Latin text found: {text}')
+
+          async def synth(text: str, out_mp3: Path) -> None:
+              communicate = edge_tts.Communicate(text, VOICE, rate='-4%', pitch='+0Hz', volume='+0%')
+              await communicate.save(str(out_mp3))
+
+          def trim(seg: AudioSegment) -> AudioSegment:
+              if seg.dBFS == float('-inf'):
+                  return seg
+              ranges = detect_nonsilent(seg, min_silence_len=60, silence_thresh=max(-48, seg.dBFS - 29), seek_step=5)
+              if not ranges:
+                  return seg
+              a = max(0, ranges[0][0] - 70)
+              b = min(len(seg), ranges[-1][1] + 120)
+              return seg[a:b]
+
+          def atempo_chain(factor: float) -> str:
+              parts = []
+              while factor > 2.0:
+                  parts.append(2.0); factor /= 2.0
+              while factor < 0.5:
+                  parts.append(0.5); factor /= 0.5
+              parts.append(factor)
+              return ','.join(f'atempo={x:.6f}' for x in parts)
+
+          def fit(seg: AudioSegment, max_ms: int, idx: int) -> AudioSegment:
+              if len(seg) <= max_ms:
+                  return seg
+              factor = len(seg) / max_ms
+              src = TMP / f'fit_{idx:03d}_src.wav'
+              dst = TMP / f'fit_{idx:03d}_dst.wav'
+              seg.export(src, format='wav')
+              subprocess.run([
+                  'ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(src),
+                  '-filter:a',atempo_chain(factor),'-ar','48000','-ac','1',str(dst)
+              ], check=True)
+              return AudioSegment.from_wav(dst)
+
+          def srt_time(seconds: float) -> str:
+              ms = int(round(seconds * 1000))
+              h, ms = divmod(ms, 3_600_000)
+              m, ms = divmod(ms, 60_000)
+              s, ms = divmod(ms, 1_000)
+              return f'{h:02d}:{m:02d}:{s:02d},{ms:03d}'
+
+          async def main() -> None:
+              master = AudioSegment.silent(duration=TOTAL_MS, frame_rate=48000).set_channels(1)
+              metadata = []
+              srt = []
+              script = []
+              for i, (start, text) in enumerate(CUES, 1):
+                  mp3 = TMP / f'{i:03d}.mp3'
+                  await synth(text, mp3)
+                  seg = trim(AudioSegment.from_file(mp3)).set_frame_rate(48000).set_channels(1)
+                  if seg.dBFS != float('-inf'):
+                      seg = seg.apply_gain(TARGET_DBFS - seg.dBFS)
+                  next_start = CUES[i][0] if i < len(CUES) else TOTAL_MS / 1000
+                  max_ms = max(900, int((next_start - start) * 1000) - 250)
+                  seg = fit(seg, max_ms, i)
+                  wav = CUE_DIR / f'{i:03d}.wav'
+                  seg.export(wav, format='wav')
+                  master = master.overlay(seg, position=int(start * 1000))
+                  end = min(TOTAL_MS / 1000, start + len(seg) / 1000)
+                  metadata.append({'start': start, 'end': end, 'text': text, 'audio': wav.name})
+                  srt.extend([str(i), f'{srt_time(start)} --> {srt_time(end)}', text, ''])
+                  script.append(text)
+
+              wav_master = OUT / 'Vishranti_Bindu_Video1_R4_Hindi_Narration.wav'
+              m4a_master = OUT / 'Vishranti_Bindu_Video1_R4_Hindi_Narration.m4a'
+              master.export(wav_master, format='wav')
+              subprocess.run([
+                  'ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(wav_master),
+                  '-af','highpass=f=70,lowpass=f=12000,alimiter=limit=0.94',
+                  '-t',str(TOTAL_MS / 1000),'-c:a','aac','-b:a','224k','-ar','48000','-ac','2',str(m4a_master)
+              ], check=True)
+
+              (OUT / 'cues.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
+              (OUT / 'Vishranti_Bindu_Video1_R4_Hindi_Subtitles.srt').write_text('\n'.join(srt), encoding='utf-8')
+              (OUT / 'Vishranti_Bindu_Video1_R4_Hindi_Voiceover_Script.txt').write_text('\n\n'.join(script), encoding='utf-8')
+              (ROOT / 'README_AUDIO.txt').write_text('Hindi-only narration and subtitles for approved Vishranti Bindu Video 1 outline. Duration: 10:30.', encoding='utf-8')
+
+          asyncio.run(main())
+          PY
+          python build_audio.py
+
+      - name: Upload production inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-video1-revised-r4-assets-audio
+          path: vb_video1_revised_r4
+          retention-days: 1
