@@ -1,0 +1,180 @@
+name: VB Video4 Sensitivity Hindi Audio
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-audio:
+    if: startsWith(github.event.issue.title, '[automation] Build VB Video4 sensitivity audio')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          echo '${{ github.run_id }}' > .automation/vb_video4_sensitivity_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_video4_sensitivity_run_id.txt
+          git commit -m 'automation: publish VB Video4 sensitivity run id' || true
+          git push
+
+      - name: Install audio tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --quiet edge-tts pydub
+
+      - name: Generate Hindi narration and subtitles
+        shell: bash
+        run: |
+          cat > build_audio.py <<'PY'
+          from __future__ import annotations
+          import asyncio, json, subprocess
+          from pathlib import Path
+          import edge_tts
+          from pydub import AudioSegment
+          from pydub.silence import detect_nonsilent
+
+          OUT = Path('vb_video4_sensitivity_audio')
+          CUE_DIR = OUT / 'voice_cues'
+          TMP = Path('tmp_video4_sensitivity')
+          OUT.mkdir(exist_ok=True); CUE_DIR.mkdir(exist_ok=True); TMP.mkdir(exist_ok=True)
+          TOTAL_MS = 760_000
+          TARGET_DBFS = -18.0
+          VOICE = 'hi-IN-SwaraNeural'
+
+          CUES = [
+              (2.0, 'विश्रांति बिन्दु। पाठ चार। जब केवल स्पर्श मिले, तब संवेदनशीलता के सहायक अभ्यास।'),
+              (10.0, 'यह सामग्री केवल दीक्षित साधकों, अधिकृत शिक्षकों और आंतरिक कार्यक्रम उपयोग के लिए है।'),
+              (19.0, 'आज हम समझेंगे कि केवल साधारण स्पर्श मिलना भी सही शुरुआत है, और स्पर्श को अधिक स्पष्ट जानने के लिए दो सरल सहायक उपाय कैसे किए जा सकते हैं।'),
+              (34.0, 'यदि अभी गर्माहट, कम्पन या कोई सूक्ष्म अनुभूति स्पष्ट नहीं है, तो निराश होने की आवश्यकता नहीं है।'),
+              (47.0, 'परिणाम की प्रतीक्षा छोड़िए और अंगूठे तथा तर्जनी के साधारण शारीरिक स्पर्श पर लौट आइए।'),
+              (61.0, 'जो वास्तव में उपस्थित है, वही आज का सही आधार है। किसी विशेष अनुभव को पैदा करने का प्रयास नहीं करना है।'),
+
+              (76.0, 'अब सहज और स्थिर बैठिए। कंधे, जबड़ा, पेट और हाथ ढीले छोड़िए।'),
+              (89.0, 'यदि सुरक्षित हों, तो आँखें धीरे से बंद कीजिए। उँगलियों के बीच अनावश्यक दबाव कम कर दीजिए।'),
+              (103.0, 'पहले कुछ क्षण केवल हल्के स्पर्श को जानिए।'),
+
+              (116.0, 'पहला सहायक उपाय है, दोनों हथेलियों को कुछ समय आपस में रगड़ना।'),
+              (128.0, 'हथेलियाँ पूरी सतह से मिलें। गति स्पष्ट हो, पर दर्द या कठोर घर्षण न हो।'),
+              (141.0, 'अब मेरे साथ हथेलियाँ रगड़ना शुरू कीजिए।'),
+              (151.0, 'गति सहज रखें। हाथों में गर्माहट बनने दें।'),
+              (164.0, 'कुछ क्षण और जारी रखें।'),
+              (178.0, 'अब रुकिए और हथेलियों को एक-दूसरे से थोड़ा अलग रखिए।'),
+              (190.0, 'दोनों हथेलियों के बीच की गर्माहट को जानिए।'),
+              (202.0, 'यदि कम्पन या परस्परता जैसा कुछ अपने आप स्पष्ट हो, तो केवल उसे जानिए।'),
+              (216.0, 'यदि केवल गर्माहट मिले, तो वही पर्याप्त है। कुछ भी कल्पना या बलपूर्वक उत्पन्न न करें।'),
+
+              (232.0, 'अब हाथों को ढीला कीजिए और दीक्षा में बताए गए हाथ की अंगूठा-तर्जनी नोकों को अत्यन्त हल्के स्पर्श में लाइए।'),
+              (248.0, 'देखिए, हथेली रगड़ने के बाद मूल स्पर्श-बिन्दु में कोई परिवर्तन स्पष्ट है या नहीं।'),
+              (263.0, 'जो भी वास्तविक रूप से उपस्थित हो, केवल उसका निरीक्षण कीजिए।'),
+
+              (278.0, 'दूसरा सहायक उपाय है, दो से तीन मिनट तक हल्की हाथ-गति, सरल व्यायाम, शिक्षक द्वारा अनुमत योगासन, या शरीर को हल्का ढीला हिलाना।'),
+              (297.0, 'अभी हम इसका छोटा नमूना करेंगे। उँगलियों को धीरे खोलिए और बंद कीजिए।'),
+              (309.0, 'कलाई को आराम से घुमाइए।'),
+              (319.0, 'फिर दोनों हाथों को बहुत हल्का ढीला हिलाइए।'),
+              (330.0, 'किसी भी गति में खिंचाव, दर्द या जोर नहीं होना चाहिए।'),
+
+              (344.0, 'अब पूरा सहायक क्रम मेरे साथ कीजिए।'),
+              (351.0, 'दोनों हथेलियों को आपस में रगड़िए।'),
+              (366.0, 'गति सहज रखें और हाथों की गर्माहट बनने दें।'),
+              (382.0, 'अब हथेलियाँ अलग कीजिए और बीच की गर्माहट जानिए।'),
+              (398.0, 'जो वास्तविक रूप से उपस्थित है, केवल उसे देखें।'),
+              (414.0, 'अब हाथ ढीले कीजिए। उँगलियाँ धीरे खोलिए और बंद कीजिए।'),
+              (430.0, 'कलाई को आराम से घुमाइए।'),
+              (445.0, 'दोनों हाथों को हल्का ढीला हिलाइए।'),
+              (460.0, 'अब गति रोकिए और हाथों को जाँघों या गोद पर टिकाइए।'),
+              (474.0, 'अंगूठे और तर्जनी की नोकों को अत्यन्त हल्के स्पर्श में मिलाइए।'),
+              (490.0, 'पहले साधारण स्पर्श को स्पष्ट जानिए।'),
+              (505.0, 'यदि कोई अतिरिक्त जानकारी अपने आप आती है, तो उसे बिना नाम दिए रहने दें।'),
+              (522.0, 'केवल स्पर्श मिले, तो भी अभ्यास सही दिशा में है।'),
+
+              (538.0, 'अब पैंतीस सेकंड तक उँगलियों के मूल स्पर्श-बिन्दु पर बने रहिए।'),
+              (553.0, 'हाथ ढीला रखें और दबाव न बढ़ाएँ।'),
+              (570.0, 'ध्यान हटे, तो उसी छोटे स्पर्श-बिन्दु पर लौट आइए।'),
+
+              (586.0, 'अब दो मिनट का स्व-अभ्यास कीजिए। हथेली रगड़ना या हल्की हाथ-गति, इनमें से एक उपाय चुनिए, फिर अंगूठा-तर्जनी के मूल स्पर्श-बिन्दु पर लौटिए।'),
+              (607.0, 'जो उपाय चुना है, उसे सहजता से कीजिए।'),
+              (628.0, 'कोई अनुभूति पैदा न करें। जो उपस्थित है, उसे ही जानें।'),
+              (650.0, 'अब मूल स्पर्श-बिन्दु पर लौटिए।'),
+              (670.0, 'हाथ और उँगलियाँ ढीली रखें।'),
+              (690.0, 'अन्तिम कुछ क्षण केवल साधारण स्पर्श के साथ रहें।'),
+
+              (708.0, 'अभ्यास की अवधि धीरे-धीरे बढ़ाई जा सकती है। कुछ मिनट से आरम्भ करके बीस मिनट या उससे अधिक तक जाएँ, पर शरीर पर जोर न डालें।'),
+              (725.0, 'बार-बार अभ्यास के बाद भी जागरूकता स्थिर न हो, तो उसका अभिलेख रखें और शिक्षक से चर्चा करें। अपनी ओर से नई विधि न बनाएँ।'),
+              (741.0, 'ऊब, अधिक विश्लेषण या संदेह के कारण दिया हुआ अभ्यास न छोड़ें। आवश्यकता हो, तो शिक्षक से प्रश्न करें।'),
+              (754.0, 'अब आँखें धीरे से खोलिए और लिखिए — आज कौन-सा सहायक उपाय किया, और उसके बाद स्पर्श में क्या परिवर्तन स्पष्ट था।'),
+          ]
+
+          async def synth(text, out_mp3):
+              await edge_tts.Communicate(text, VOICE, rate='-4%', pitch='+0Hz', volume='+0%').save(str(out_mp3))
+
+          def trim(seg):
+              if seg.dBFS == float('-inf'): return seg
+              ranges = detect_nonsilent(seg, min_silence_len=70, silence_thresh=max(-47, seg.dBFS-28), seek_step=5)
+              if not ranges: return seg
+              return seg[max(0,ranges[0][0]-70):min(len(seg),ranges[-1][1]+120)]
+
+          def atempo_chain(factor):
+              parts=[]
+              while factor>2.0: parts.append(2.0); factor/=2.0
+              while factor<0.5: parts.append(0.5); factor/=0.5
+              parts.append(factor)
+              return ','.join(f'atempo={x:.6f}' for x in parts)
+
+          def fit(seg,max_ms,idx):
+              if len(seg)<=max_ms: return seg
+              factor=len(seg)/max_ms
+              src=TMP/f'fit_{idx:02d}_src.wav'; dst=TMP/f'fit_{idx:02d}_dst.wav'
+              seg.export(src,format='wav')
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(src),'-filter:a',atempo_chain(factor),'-ar','48000','-ac','1',str(dst)],check=True)
+              return AudioSegment.from_wav(dst)
+
+          def srt_time(sec):
+              ms=int(round(sec*1000)); h,ms=divmod(ms,3600000); m,ms=divmod(ms,60000); s,ms=divmod(ms,1000)
+              return f'{h:02d}:{m:02d}:{s:02d},{ms:03d}'
+
+          async def main():
+              master=AudioSegment.silent(duration=TOTAL_MS,frame_rate=48000).set_channels(1)
+              meta=[]; srt=[]; script=[]
+              for i,(start,text) in enumerate(CUES,1):
+                  mp3=TMP/f'{i:02d}.mp3'; await synth(text,mp3)
+                  seg=trim(AudioSegment.from_file(mp3)).set_frame_rate(48000).set_channels(1)
+                  if seg.dBFS!=float('-inf'): seg=seg.apply_gain(TARGET_DBFS-seg.dBFS)
+                  next_start=CUES[i][0] if i<len(CUES) else TOTAL_MS/1000
+                  seg=fit(seg,max(900,int((next_start-start)*1000)-260),i)
+                  wav=CUE_DIR/f'{i:02d}.wav'; seg.export(wav,format='wav')
+                  master=master.overlay(seg,position=int(start*1000))
+                  end=min(TOTAL_MS/1000,start+len(seg)/1000)
+                  meta.append({'start':start,'end':end,'text':text,'audio':wav.name})
+                  srt.extend([str(i),f'{srt_time(start)} --> {srt_time(end)}',text,''])
+                  script.append(text)
+              wav=OUT/'Vishranti_Bindu_Video4_Hindi_Narration.wav'
+              m4a=OUT/'Vishranti_Bindu_Video4_Hindi_Narration.m4a'
+              master.export(wav,format='wav')
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(wav),'-af','highpass=f=70,lowpass=f=12000,alimiter=limit=0.94','-t',str(TOTAL_MS/1000),'-c:a','aac','-b:a','192k','-ar','48000','-ac','2',str(m4a)],check=True)
+              (OUT/'cues.json').write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding='utf-8')
+              (OUT/'Vishranti_Bindu_Video4_Hindi_Subtitles.srt').write_text('\n'.join(srt),encoding='utf-8')
+              (OUT/'Vishranti_Bindu_Video4_Hindi_Voiceover_Script.txt').write_text('\n\n'.join(script),encoding='utf-8')
+              (OUT/'README.txt').write_text('Timed Hindi narration for Vishranti Bindu Video 4. Duration: 12:40.',encoding='utf-8')
+          asyncio.run(main())
+          PY
+          python build_audio.py
+
+      - name: Upload audio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-video4-sensitivity-audio
+          path: vb_video4_sensitivity_audio
+          retention-days: 1
