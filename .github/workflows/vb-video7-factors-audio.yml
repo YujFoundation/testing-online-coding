@@ -1,0 +1,206 @@
+name: VB Video7 Factors Hindi Audio
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-audio:
+    if: startsWith(github.event.issue.title, '[automation] Build VB Video7 factors audio')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          echo '${{ github.run_id }}' > .automation/vb_video7_factors_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_video7_factors_run_id.txt
+          git commit -m 'automation: publish VB Video7 run id' || true
+          git push
+
+      - name: Install audio tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --quiet edge-tts pydub
+
+      - name: Generate Hindi narration and subtitles
+        shell: bash
+        run: |
+          cat > build_audio.py <<'PY'
+          from __future__ import annotations
+
+          import asyncio
+          import json
+          import subprocess
+          from pathlib import Path
+
+          import edge_tts
+          from pydub import AudioSegment
+          from pydub.silence import detect_nonsilent
+
+          ROOT = Path('vb_video7_factors_audio')
+          CUE_DIR = ROOT / 'voice_cues'
+          TMP = Path('tmp_vb_video7_factors')
+          ROOT.mkdir(exist_ok=True)
+          CUE_DIR.mkdir(exist_ok=True)
+          TMP.mkdir(exist_ok=True)
+
+          TOTAL_MS = 750_000
+          TARGET_DBFS = -18.0
+          VOICE = 'hi-IN-SwaraNeural'
+
+          CUES = [
+              (2.0, 'विश्रांति बिन्दु। पाठ सात। योगासन, प्रकृति, परिश्रम, मनोदशा और आचरण का अनुभव-आधारित निरीक्षण।'),
+              (12.0, 'यह सामग्री केवल दीक्षित साधकों, अधिकृत शिक्षकों और आंतरिक कार्यक्रम उपयोग के लिए है।'),
+              (22.0, 'आज हम कोई नया अभ्यास नहीं जोड़ेंगे। हम यह देखेंगे कि जीवन की कुछ स्थितियाँ हमारे अनुभव की स्पष्टता को कैसे प्रभावित करती हैं।'),
+              (38.0, 'उद्देश्य अपने लिए कठोर नियम बनाना नहीं है। उद्देश्य है—बार-बार दिखाई देने वाले अपने व्यक्तिगत ढंग को ईमानदारी से पहचानना।'),
+
+              (55.0, 'सबसे पहले आज की स्थिति का छोटा आधार-अभिलेख बनाएँ।'),
+              (64.0, 'लिखें—इस समय शरीर में कितनी ऊर्जा है, कितनी थकान है, मनोदशा कैसी है, और मूल स्पर्श-बिन्दु कितनी जल्दी स्पष्ट हो रहा है।'),
+              (85.0, 'फिर पहले सीखे हुए क्रम से हल्का स्पर्श बनाकर अनुभव स्पष्ट होने का समय और उसकी स्पष्टता लिखें।'),
+
+              (103.0, 'अब सेवन से जुड़ी एक सावधानी समझें।'),
+              (111.0, 'मदिरा, बार-बार भारीपन देने वाला तामसिक भोजन, या अत्यधिक मसालेदार सेवन कुछ लोगों में संवेदनशीलता घटा सकता है।'),
+              (130.0, 'इसे जाँचने के लिए कोई हानिकारक स्थिति जानबूझकर पैदा न करें। जीवन में स्वाभाविक रूप से जो हुआ हो, केवल उसका प्रभाव लिखें।'),
+              (149.0, 'यदि अपने अभिलेख में बार-बार स्पष्ट गिरावट दिखाई दे, तो उस सेवन को घटाने या छोड़ने पर शिक्षक से चर्चा करें।'),
+
+              (166.0, 'अब योगासन को सहायक साधन की तरह देखें।'),
+              (174.0, 'जहाँ व्यावहारिक हो, सुबह या शाम उपयुक्त योगासन के पहले और बाद वही छोटा विश्रांति बिन्दु अभ्यास करें।'),
+              (193.0, 'लिखें—शरीर की ताजगी, अनुभव आरम्भ होने का समय, और स्पर्श की स्पष्टता में क्या अन्तर आया।'),
+              (208.0, 'योगासन को परिणाम पैदा करने का साधन न बनाएँ। वह केवल तुलना के लिए एक सहायक परिस्थिति है।'),
+
+              (224.0, 'प्रकृति के साथ समय बिताना भी एक वैकल्पिक सहायक परिस्थिति है।'),
+              (234.0, 'सुरक्षित और स्वच्छ मिट्टी या घास पर लगभग तीस मिनट नंगे पैर चलना एक स्रोत-सुझावित विकल्प है।'),
+              (253.0, 'चलते समय आँखें खुली रखें, आसपास की पूरी जानकारी बनाए रखें, और असुरक्षित सतह पर न चलें।'),
+              (270.0, 'चलने से पहले और बाद अपनी ऊर्जा तथा मूल स्पर्श-बिन्दु की स्पष्टता लिखें।'),
+
+              (285.0, 'अब अधिक परिश्रम और थकान का निरीक्षण करें।'),
+              (294.0, 'गर्मी में अत्यधिक दौड़ना, थकाऊ यात्रा, अनावश्यक काम, या कोई ऐसी गतिविधि जो शरीर को बार-बार रिक्त कर दे—उसका प्रभाव देखें।'),
+              (315.0, 'शरीर पर जोर देकर प्रयोग न करें। केवल स्वाभाविक दिनचर्या में हुई गतिविधि, थकान और बाद की स्पष्टता दर्ज करें।'),
+              (334.0, 'यदि थकान के बाद अनुभव लगातार कमजोर हो, तो पर्याप्त विश्राम लें और अपने अभिलेख के साथ शिक्षक से बात करें।'),
+
+              (351.0, 'अब क्रोध के समय और बाद की स्थिति देखें।'),
+              (359.0, 'क्रोध उठे, तो उसे दबाने या बढ़ाने की कोशिश न करें। पहले सुरक्षित सामान्य व्यवहार बनाए रखें।'),
+              (376.0, 'बाद में लिखें—क्रोध का कारण, उसकी तीव्रता, उस समय अनुभव में क्या परिवर्तन हुआ, और सामान्य स्पष्टता लौटने में कितना समय लगा।'),
+              (401.0, 'उद्देश्य क्रोध को विश्रांति बिन्दु से नियंत्रित करना नहीं है। उद्देश्य केवल अपने ढंग को जानना है।'),
+
+              (416.0, 'यौन गतिविधि या चरमसुख के बाद होने वाले परिवर्तन का भी निजी और व्यक्तिगत निरीक्षण किया जा सकता है।'),
+              (432.0, 'लिखें—समय, शरीर की जीवंतता, मूल स्पर्श-बिन्दु की स्पष्टता, और सामान्य स्थिति लौटने में लगा समय।'),
+              (452.0, 'इस निरीक्षण से अपराधबोध, जबरन दमन, या सबके लिए एक समान नियम नहीं बनाना है।'),
+              (469.0, 'यदि बार-बार कोई स्पष्ट संबंध दिखाई दे, तो उसे समझ के साथ देखें और आवश्यकता हो तो शिक्षक से चर्चा करें।'),
+
+              (485.0, 'अब आचरण से जुड़ी परिस्थितियाँ देखें।'),
+              (494.0, 'ईमानदारी, निष्ठा, अहिंसा, प्रेमपूर्ण व्यवहार, दान और सेवा—जहाँ ये स्वाभाविक रूप से घटित हों, उनके बाद अनुभव में क्या परिवर्तन आता है, यह लिखें।'),
+              (520.0, 'किसी अच्छे कर्म के बदले विशेष अनुभव की अपेक्षा न रखें। केवल यह देखें कि मूल स्पर्श-बिन्दु की स्पष्टता बढ़ी, घटी, या समान रही।'),
+
+              (539.0, 'अब आप मेरे साथ अपना छोटा निरीक्षण-कार्य चुनें।'),
+              (548.0, 'अपनी नोटबुक में दो खण्ड बनाएँ—एक सहायक परिस्थिति और एक संवेदनशीलता घटाने वाली परिस्थिति।'),
+              (565.0, 'सहायक परिस्थिति के लिए योगासन, प्रकृति में सुरक्षित चलना, पर्याप्त आराम, या कोई स्वाभाविक प्रेमपूर्ण सेवा चुनी जा सकती है।'),
+              (585.0, 'दूसरे खण्ड में केवल जीवन में स्वाभाविक रूप से आने वाली थकान, क्रोध, भारीपन, या दूसरी कठिन परिस्थिति लिखें। उसे जानबूझकर पैदा नहीं करना है।'),
+              (610.0, 'दोनों स्थितियों में वही मूल अभ्यास रखें और लिखें—पहले की स्थिति, चुना हुआ कारक, अनुभव आरम्भ होने का समय, स्पष्टता, और बाद की स्थिति।'),
+              (635.0, 'अगले पैंतालीस सेकंड अपनी दो-खण्ड वाली योजना लिखें।'),
+
+              (682.0, 'अब एक सप्ताह का छोटा व्यक्तिगत निरीक्षण तय करें।'),
+              (692.0, 'एक समय में एक मुख्य कारक देखें, प्रतिदिन कम से कम एक पंक्ति लिखें, और एक घटना से निष्कर्ष न निकालें।'),
+              (711.0, 'अगले पच्चीस सेकंड लिखें—पहला कारक कौन-सा होगा, पहली तारीख क्या होगी, और शिक्षक से क्या पूछना है।'),
+
+              (737.0, 'अन्तिम जाँच करें। क्या परिस्थिति स्वाभाविक है? क्या मूल अभ्यास समान रहेगा? क्या आप बिना अपराधबोध और बिना दमन के केवल निरीक्षण दर्ज करेंगे?'),
+              (750.0, 'यही आज का अभ्यास है—एक कारक चुनें, पहले और बाद की स्थिति लिखें, दोहराव देखें, और कठोर नियम बनाने के बजाय समझ विकसित करें।'),
+          ]
+
+          async def synth(text: str, out_mp3: Path) -> None:
+              comm = edge_tts.Communicate(text, VOICE, rate='-4%', pitch='+0Hz', volume='+0%')
+              await comm.save(str(out_mp3))
+
+          def trim(seg: AudioSegment) -> AudioSegment:
+              if seg.dBFS == float('-inf'):
+                  return seg
+              ranges = detect_nonsilent(seg, min_silence_len=70, silence_thresh=max(-47, seg.dBFS - 28), seek_step=5)
+              if not ranges:
+                  return seg
+              a = max(0, ranges[0][0] - 80)
+              b = min(len(seg), ranges[-1][1] + 130)
+              return seg[a:b]
+
+          def atempo_chain(factor: float) -> str:
+              parts = []
+              while factor > 2.0:
+                  parts.append(2.0); factor /= 2.0
+              while factor < 0.5:
+                  parts.append(0.5); factor /= 0.5
+              parts.append(factor)
+              return ','.join(f'atempo={x:.6f}' for x in parts)
+
+          def fit(seg: AudioSegment, max_ms: int, idx: int) -> AudioSegment:
+              if len(seg) <= max_ms:
+                  return seg
+              factor = len(seg) / max_ms
+              src = TMP / f'fit_{idx:02d}_src.wav'
+              dst = TMP / f'fit_{idx:02d}_dst.wav'
+              seg.export(src, format='wav')
+              subprocess.run([
+                  'ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(src),
+                  '-filter:a',atempo_chain(factor),'-ar','48000','-ac','1',str(dst)
+              ], check=True)
+              return AudioSegment.from_wav(dst)
+
+          def srt_time(sec: float) -> str:
+              ms = int(round(sec * 1000))
+              h, ms = divmod(ms, 3_600_000); m, ms = divmod(ms, 60_000); s, ms = divmod(ms, 1000)
+              return f'{h:02d}:{m:02d}:{s:02d},{ms:03d}'
+
+          async def main() -> None:
+              master = AudioSegment.silent(duration=TOTAL_MS, frame_rate=48000).set_channels(1)
+              meta, srt, script_lines = [], [], []
+              for i, (start, text) in enumerate(CUES, 1):
+                  mp3 = TMP / f'{i:02d}.mp3'
+                  await synth(text, mp3)
+                  seg = trim(AudioSegment.from_file(mp3)).set_frame_rate(48000).set_channels(1)
+                  if seg.dBFS != float('-inf'):
+                      seg = seg.apply_gain(TARGET_DBFS - seg.dBFS)
+                  next_start = CUES[i][0] if i < len(CUES) else TOTAL_MS / 1000
+                  max_ms = max(900, int((next_start - start) * 1000) - 260)
+                  seg = fit(seg, max_ms, i)
+                  wav = CUE_DIR / f'{i:02d}.wav'
+                  seg.export(wav, format='wav')
+                  master = master.overlay(seg, position=int(start * 1000))
+                  end = min(TOTAL_MS / 1000, start + len(seg) / 1000)
+                  meta.append({'start': start, 'end': end, 'text': text, 'audio': wav.name})
+                  srt.extend([str(i), f'{srt_time(start)} --> {srt_time(end)}', text, ''])
+                  script_lines.append(text)
+
+              wav_master = ROOT / 'Vishranti_Bindu_Video7_Hindi_Narration.wav'
+              m4a_master = ROOT / 'Vishranti_Bindu_Video7_Hindi_Narration.m4a'
+              master.export(wav_master, format='wav')
+              subprocess.run([
+                  'ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(wav_master),
+                  '-af','highpass=f=70,lowpass=f=12000,alimiter=limit=0.94',
+                  '-t',str(TOTAL_MS/1000),'-c:a','aac','-b:a','224k','-ar','48000','-ac','2',str(m4a_master)
+              ], check=True)
+              (ROOT / 'cues.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+              (ROOT / 'Vishranti_Bindu_Video7_Hindi_Subtitles.srt').write_text('\n'.join(srt), encoding='utf-8')
+              (ROOT / 'Vishranti_Bindu_Video7_Hindi_Voiceover_Script.txt').write_text('\n\n'.join(script_lines), encoding='utf-8')
+              (ROOT / 'README.txt').write_text('VB Video 7 Hindi narration and subtitles. Duration: 12:30. Voice: hi-IN-SwaraNeural.', encoding='utf-8')
+
+          asyncio.run(main())
+          PY
+          python build_audio.py
+
+      - name: Upload audio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-video7-factors-audio
+          path: vb_video7_factors_audio
+          retention-days: 1
