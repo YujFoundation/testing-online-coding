@@ -57,7 +57,7 @@ jobs:
           CUE_DIR.mkdir(exist_ok=True)
           TMP.mkdir(exist_ok=True)
 
-          TOTAL_MS = 118_000
+          TOTAL_MS = 128_000
           TARGET_DBFS = -17.5
           VOICE = 'hi-IN-SwaraNeural'
 
@@ -72,7 +72,8 @@ jobs:
               (89.0, 'प्रगति अनुमान से नहीं, नियमित अभ्यास, स्व-जाँच, अभिलेख और शिक्षक की समीक्षा से तय होती है।'),
               (99.0, 'हर व्यक्ति की गति अलग हो सकती है। कोई विशेष अनुभव अनिवार्य नहीं है, और किसी परिणाम की गारंटी नहीं दी जाती।'),
               (108.0, 'उद्देश्य है—जो वास्तव में उपस्थित है, उसे बिना बल, बिना कल्पना और बिना दिखावे के जानना।'),
-              (114.0, 'विश्रांति बिन्दु बेसिक। जीवन से भागकर नहीं—जीवन के बीच जागरूक होना सीखें। सटीक अभ्यास अधिकृत दीक्षा और आंतरिक कार्यक्रम के माध्यम से उपलब्ध है।'),
+              (114.5, 'विश्रांति बिन्दु बेसिक—जीवन से भागकर नहीं, जीवन के बीच जागरूक होना सीखें।'),
+              (121.0, 'सटीक अभ्यास केवल अधिकृत दीक्षा और आंतरिक कार्यक्रम के माध्यम से उपलब्ध है।'),
           ]
 
           async def synth(text: str, out_mp3: Path) -> None:
@@ -147,7 +148,7 @@ jobs:
               (ROOT / 'cues.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
               (ROOT / 'Vishranti_Bindu_Marketing_Intro_Hindi_Subtitles.srt').write_text('\n'.join(srt), encoding='utf-8')
               (ROOT / 'Vishranti_Bindu_Marketing_Intro_Hindi_Voiceover_Script.txt').write_text('\n\n'.join(script_lines), encoding='utf-8')
-              (ROOT / 'README.txt').write_text('Hindi marketing introduction audio for Vishranti Bindu Basic. Public-safe: no exact practice disclosed. Duration: 1:58.', encoding='utf-8')
+              (ROOT / 'README.txt').write_text('Hindi marketing introduction audio for Vishranti Bindu Basic. Public-safe: no exact practice disclosed. Duration: 2:08.', encoding='utf-8')
 
           asyncio.run(main())
           PY
@@ -156,6 +157,6 @@ jobs:
       - name: Upload audio bundle
         uses: actions/upload-artifact@v4
         with:
-          name: vb-marketing-intro-audio
+          name: vb-marketing-intro-audio-v2
           path: vb_marketing_intro_audio
           retention-days: 1
