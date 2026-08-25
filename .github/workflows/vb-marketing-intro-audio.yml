@@ -1,0 +1,161 @@
+name: VB Marketing Intro Hindi Audio
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-audio:
+    if: startsWith(github.event.issue.title, '[automation] Build VB marketing intro audio')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          echo '${{ github.run_id }}' > .automation/vb_marketing_intro_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_marketing_intro_run_id.txt
+          git commit -m 'automation: publish VB marketing intro run id' || true
+          git push
+
+      - name: Install audio tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --quiet edge-tts pydub
+
+      - name: Generate Hindi narration and subtitles
+        shell: bash
+        run: |
+          cat > build_audio.py <<'PY'
+          from __future__ import annotations
+
+          import asyncio
+          import json
+          import subprocess
+          from pathlib import Path
+
+          import edge_tts
+          from pydub import AudioSegment
+          from pydub.silence import detect_nonsilent
+
+          ROOT = Path('vb_marketing_intro_audio')
+          CUE_DIR = ROOT / 'voice_cues'
+          TMP = Path('tmp_vb_marketing_intro')
+          ROOT.mkdir(exist_ok=True)
+          CUE_DIR.mkdir(exist_ok=True)
+          TMP.mkdir(exist_ok=True)
+
+          TOTAL_MS = 118_000
+          TARGET_DBFS = -17.5
+          VOICE = 'hi-IN-SwaraNeural'
+
+          CUES = [
+              (1.5, 'क्या शांति केवल आँखें बंद करके बैठने का नाम है? या जीवन के बीच भी अपने भीतर से जुड़ा रहना सीखा जा सकता है?'),
+              (10.5, 'युज फाउंडेशन प्रस्तुत करता है—विश्रांति बिन्दु बेसिक। एक अनुभव-आधारित, क्रमबद्ध आध्यात्मिक कार्यक्रम।'),
+              (20.0, 'यहाँ मानने से पहले स्वयं जानने पर बल है। किसी कल्पना, चमत्कार या निश्चित अनुभूति का पीछा नहीं कराया जाता।'),
+              (31.0, 'आप सुरक्षित मार्गदर्शन में अपने भीतर उपस्थित सूक्ष्म संकेतों को पहचानना, वास्तविक अनुभव और मन की कल्पना में अन्तर करना, तथा ध्यान भटकने पर सहजता से लौटना सीखते हैं।'),
+              (46.0, 'हर पाठ पहले समझाता है, फिर दिखाता है, आपके साथ अभ्यास कराता है, और फिर आपको स्वयं करने का समय देता है।'),
+              (58.0, 'यह सीख केवल एक शांत कमरे तक सीमित नहीं रहती। धीरे-धीरे इसे बैठने, पढ़ने, चलने, बातचीत और दैनिक जीवन की सामान्य परिस्थितियों से जोड़ना सिखाया जाता है—सुरक्षा और बाहरी जागरूकता बनाए रखते हुए।'),
+              (75.0, 'आप अपने अनुभवों का संक्षिप्त अभिलेख रखते हैं और देखते हैं कि नींद, भोजन, थकान, मनोदशा और दिनचर्या आपके अनुभव की स्पष्टता को कैसे प्रभावित करते हैं।'),
+              (89.0, 'प्रगति अनुमान से नहीं, नियमित अभ्यास, स्व-जाँच, अभिलेख और शिक्षक की समीक्षा से तय होती है।'),
+              (99.0, 'हर व्यक्ति की गति अलग हो सकती है। कोई विशेष अनुभव अनिवार्य नहीं है, और किसी परिणाम की गारंटी नहीं दी जाती।'),
+              (108.0, 'उद्देश्य है—जो वास्तव में उपस्थित है, उसे बिना बल, बिना कल्पना और बिना दिखावे के जानना।'),
+              (114.0, 'विश्रांति बिन्दु बेसिक। जीवन से भागकर नहीं—जीवन के बीच जागरूक होना सीखें। सटीक अभ्यास अधिकृत दीक्षा और आंतरिक कार्यक्रम के माध्यम से उपलब्ध है।'),
+          ]
+
+          async def synth(text: str, out_mp3: Path) -> None:
+              comm = edge_tts.Communicate(text, VOICE, rate='+2%', pitch='+0Hz', volume='+0%')
+              await comm.save(str(out_mp3))
+
+          def trim(seg: AudioSegment) -> AudioSegment:
+              if seg.dBFS == float('-inf'):
+                  return seg
+              ranges = detect_nonsilent(seg, min_silence_len=60, silence_thresh=max(-47, seg.dBFS - 28), seek_step=5)
+              if not ranges:
+                  return seg
+              a = max(0, ranges[0][0] - 60)
+              b = min(len(seg), ranges[-1][1] + 100)
+              return seg[a:b]
+
+          def atempo_chain(factor: float) -> str:
+              parts = []
+              while factor > 2.0:
+                  parts.append(2.0); factor /= 2.0
+              while factor < 0.5:
+                  parts.append(0.5); factor /= 0.5
+              parts.append(factor)
+              return ','.join(f'atempo={x:.6f}' for x in parts)
+
+          def fit(seg: AudioSegment, max_ms: int, idx: int) -> AudioSegment:
+              if len(seg) <= max_ms:
+                  return seg
+              factor = len(seg) / max_ms
+              src = TMP / f'fit_{idx:02d}_src.wav'
+              dst = TMP / f'fit_{idx:02d}_dst.wav'
+              seg.export(src, format='wav')
+              subprocess.run([
+                  'ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(src),
+                  '-filter:a',atempo_chain(factor),'-ar','48000','-ac','1',str(dst)
+              ], check=True)
+              return AudioSegment.from_wav(dst)
+
+          def srt_time(sec: float) -> str:
+              ms = int(round(sec * 1000))
+              h, ms = divmod(ms, 3_600_000); m, ms = divmod(ms, 60_000); s, ms = divmod(ms, 1000)
+              return f'{h:02d}:{m:02d}:{s:02d},{ms:03d}'
+
+          async def main() -> None:
+              master = AudioSegment.silent(duration=TOTAL_MS, frame_rate=48000).set_channels(1)
+              meta, srt, script_lines = [], [], []
+              for i, (start, text) in enumerate(CUES, 1):
+                  mp3 = TMP / f'{i:02d}.mp3'
+                  await synth(text, mp3)
+                  seg = trim(AudioSegment.from_file(mp3)).set_frame_rate(48000).set_channels(1)
+                  if seg.dBFS != float('-inf'):
+                      seg = seg.apply_gain(TARGET_DBFS - seg.dBFS)
+                  next_start = CUES[i][0] if i < len(CUES) else TOTAL_MS / 1000
+                  max_ms = max(1000, int((next_start - start) * 1000) - 220)
+                  seg = fit(seg, max_ms, i)
+                  wav = CUE_DIR / f'{i:02d}.wav'
+                  seg.export(wav, format='wav')
+                  master = master.overlay(seg, position=int(start * 1000))
+                  end = min(TOTAL_MS / 1000, start + len(seg) / 1000)
+                  meta.append({'start': start, 'end': end, 'text': text, 'audio': wav.name})
+                  srt.extend([str(i), f'{srt_time(start)} --> {srt_time(end)}', text, ''])
+                  script_lines.append(text)
+
+              wav_master = ROOT / 'Vishranti_Bindu_Marketing_Intro_Hindi_Narration.wav'
+              m4a_master = ROOT / 'Vishranti_Bindu_Marketing_Intro_Hindi_Narration.m4a'
+              master.export(wav_master, format='wav')
+              subprocess.run([
+                  'ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(wav_master),
+                  '-af','highpass=f=70,lowpass=f=12000,alimiter=limit=0.94',
+                  '-t',str(TOTAL_MS/1000),'-c:a','aac','-b:a','224k','-ar','48000','-ac','2',str(m4a_master)
+              ], check=True)
+              (ROOT / 'cues.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+              (ROOT / 'Vishranti_Bindu_Marketing_Intro_Hindi_Subtitles.srt').write_text('\n'.join(srt), encoding='utf-8')
+              (ROOT / 'Vishranti_Bindu_Marketing_Intro_Hindi_Voiceover_Script.txt').write_text('\n\n'.join(script_lines), encoding='utf-8')
+              (ROOT / 'README.txt').write_text('Hindi marketing introduction audio for Vishranti Bindu Basic. Public-safe: no exact practice disclosed. Duration: 1:58.', encoding='utf-8')
+
+          asyncio.run(main())
+          PY
+          python build_audio.py
+
+      - name: Upload audio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-marketing-intro-audio
+          path: vb_marketing_intro_audio
+          retention-days: 1
