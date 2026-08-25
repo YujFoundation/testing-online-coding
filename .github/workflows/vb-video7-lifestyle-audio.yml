@@ -1,0 +1,47 @@
+name: VB Video7 Lifestyle Hindi Audio
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  build-audio:
+    if: startsWith(github.event.issue.title, '[automation] Build VB Video7 lifestyle audio')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .automation
+          echo '${{ github.run_id }}' > .automation/vb_video7_lifestyle_run_id.txt
+          git config user.name 'YUJ Automation'
+          git config user.email 'automation@yujfoundation.invalid'
+          git add .automation/vb_video7_lifestyle_run_id.txt
+          git commit -m 'automation: publish VB Video7 run id' || true
+          git push
+
+      - name: Install audio tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --quiet edge-tts pydub
+
+      - name: Generate Hindi narration and subtitles
+        shell: bash
+        run: python automation/vb_video7_lifestyle_audio.py
+
+      - name: Upload audio bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb-video7-lifestyle-audio
+          path: vb_video7_lifestyle_audio
+          retention-days: 1
